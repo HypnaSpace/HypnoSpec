@@ -381,7 +381,10 @@ BST block tests are cool [sound=/static/testing/ding.mp3]
     }
 
     switch(cmd.type){
-      case 'anchor' || 'controller' || 'setting' || 'style':
+      case 'anchor':
+      case 'controller':
+      case 'setting':
+      case 'style':
         break;
       case settingCommands.find(s => s.includes(cmd.type)) !== undefined ? cmd.type : false:
         console.error("Can't run settings changes inline. Offending Line: ", cmd);

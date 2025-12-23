@@ -157,8 +157,8 @@ export class SpaceHypnaFeatureSpiralsWebgl extends FeatureBase {
 
     // 255 to percentage to 0.0-1.0
 
-    this.gl.uniform3fv(spiralColorUniformLocation, [this.workspace.spiral_color.red / 255, this.workspace.spiral_color.green / 255, this.workspace.spiral_color.blue / 255] || [1,0,0]); // Red
-    this.gl.uniform3fv(bgColorUniformLocation, [this.workspace.bg_color.red / 255, this.workspace.bg_color.green / 255, this.workspace.bg_color.blue / 255] || [0,0,0]); // Black
+    this.gl.uniform3fv(spiralColorUniformLocation, this.workspace.spiral_color ? [this.workspace.spiral_color.red / 255, this.workspace.spiral_color.green / 255, this.workspace.spiral_color.blue / 255] : [1,0,0]); // Red
+    this.gl.uniform3fv(bgColorUniformLocation, this.workspace.spiral_color ? [this.workspace.spiral_color.red / 255, this.workspace.spiral_color.green / 255, this.workspace.spiral_color.blue / 255] : [0,0,0]); // Black
     this.gl.uniform1f(spinSpeedUniformLocation, parseInt(this.get_configuration_element("spin_speed")) || 1);
     this.gl.uniform1f(throbSpeedUniformLocation, parseInt(this.get_configuration_element("throb_speed")) || 2);
     this.gl.uniform1f(throbStrengthUniformLocation, parseInt(this.get_configuration_element("throb_strength")) || 1);
@@ -246,8 +246,8 @@ export class SpaceHypnaFeatureSpiralsWebgl extends FeatureBase {
 
       // 255 to percentage to 0.0-1.0
 
-      this.gl2.uniform3fv(spiralColorUniformLocation, [this.workspace.spiral_color.red / 255, this.workspace.spiral_color.green / 255, this.workspace.spiral_color.blue / 255] || [1,0,0]); // Red
-      this.gl2.uniform3fv(bgColorUniformLocation, [this.workspace.bg_color.red / 255, this.workspace.bg_color.green / 255, this.workspace.bg_color.blue / 255] || [0,0,0]); // Black
+      this.gl.uniform3fv(spiralColorUniformLocation, this.workspace.spiral_color ? [this.workspace.spiral_color.red / 255, this.workspace.spiral_color.green / 255, this.workspace.spiral_color.blue / 255] : [1,0,0]); // Red
+      this.gl.uniform3fv(bgColorUniformLocation, this.workspace.spiral_color ? [this.workspace.spiral_color.red / 255, this.workspace.spiral_color.green / 255, this.workspace.spiral_color.blue / 255] : [0,0,0]); // Black
       this.gl2.uniform1f(spinSpeedUniformLocation, parseInt(this.get_configuration_element("spin_speed")) || 1);
       this.gl2.uniform1f(throbSpeedUniformLocation, parseInt(this.get_configuration_element("throb_speed")) || 2);
       this.gl2.uniform1f(throbStrengthUniformLocation, parseInt(this.get_configuration_element("throb_strength")) || 1);
