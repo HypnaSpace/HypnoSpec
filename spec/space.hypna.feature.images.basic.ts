@@ -1,5 +1,4 @@
 import {FeatureBase} from "./space.hypna.feature._base";
-import seedrandom from "seedrandom";
 
 
 export class SpaceHypnaFeatureImagesBasic extends  FeatureBase {
@@ -8,7 +7,6 @@ export class SpaceHypnaFeatureImagesBasic extends  FeatureBase {
   workspaceContainer!: HTMLDivElement;
   imagesContainer!: HTMLDivElement;
   imagesContainer2!: HTMLDivElement;
-  rng = seedrandom(this.id+" "+(new Date()).getHours()+(new Date()).getMinutes());
 
   override preload(): void {
     this.workspace.images = this.get_configuration_element("images_handled_by_outside_source") ? this._service.images : this.get_configuration_element("images");
