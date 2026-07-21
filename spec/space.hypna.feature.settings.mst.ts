@@ -8,6 +8,21 @@ export class SpaceHypnaFeatureSettingsMst extends FeatureBase {
   workspaceDOMElement!: HTMLDivElement;
   lineCount: number = 0;
   yssActivated: boolean = false;
+  private retimeIterator: ((ms: number) => void) | null = null;
+
+  /** Apply a block's on-entry styles/settings when YSS reaches its first line. */
+  private applyYssBlockEntry(line: any): void {
+    if (!line || !line.enterBlock) return;
+    for (const style of line.enterBlock.styles) this._service.yssService.runCommand(style);
+    for (const setting of line.enterBlock.settings) {
+      if (setting.type === 'setting.spirals.line_duration') {
+        const ms = parseInt(setting.value);
+        if (!isNaN(ms) && ms > 0 && this.retimeIterator) this.retimeIterator(ms);
+      } else if (setting.type === 'setting.session.type') {
+        console.warn('YSS: setting.session.type is not hot-swappable mid-session; ignoring', setting.value);
+      }
+    }
+  }
 
   override preload(): void {
 
@@ -96,35 +111,29 @@ export class SpaceHypnaFeatureSettingsMst extends FeatureBase {
 
 
 
-      this.iterator = setInterval(() => {
+      const tick = () => {
           if(this._service.use_yss && !this.yssActivated){
-            console.warn(this._id, "YSS is activated, reconfiguring session.")
+            console.warn(this._id, "YSS is activated, compiling script.")
             this.yssActivated = true;
-            this.workspace.lines = this._service.yssService.process(this.workspace.lines.join('\n'))
+            const cap = Math.min(Math.max(this.workspace.lines.length * 4, 200), 5000);
+            const compiled = this._service.yssService.compile(this.workspace.lines.join('\n'), cap);
+            this.workspace.lines = compiled.lines;
+            this._service.console.push(this._id + ": YSS compiled " + this.workspace.lines.length + " line(s)");
           }
 
 
-          // choose a new line randomly
+          // YSS activated: play the compiled lines in order, one line per tick.
         if(this.yssActivated){
-          let selected = this.workspace.lines[this.lineCount]! || "";
-          if(selected.words == ""){
+          let selected = this.workspace.lines[this.lineCount] || "";
+          if(selected === "" || selected.words === undefined || selected.words === ""){
             let c = document.getElementsByClassName("focus-line")
           for(let i = 0; i < c.length; i++) {
             (c[i] as HTMLDivElement).innerText = "";
           }
           }else{
-            let trimmed = "";
-            if(selected.words !== undefined){
-              trimmed = selected.words.replace('[*]', '');
-              while(trimmed.includes('[*]')){
-                trimmed = trimmed.replace('[*]','');
-              }
-            }else{
-              trimmed = "";
-            }
+            this.applyYssBlockEntry(selected);
 
-
-            //document.getElementById("focus-line")!.innerText = trimmed;
+            let trimmed = selected.words.replace(/\[\*\]/g, '').replace(/\s+/g, ' ').trim();
 
             let c = document.getElementsByClassName("focus-line")
           for(let i = 0; i < c.length; i++) {
@@ -133,14 +142,12 @@ export class SpaceHypnaFeatureSettingsMst extends FeatureBase {
 
             if(selected.cmds !== undefined){
               for(let cmd of selected.cmds) {
-                this._service.yssService.runCommand(cmd, null);
+                this._service.yssService.runCommand(cmd);
               }
             }
-
-            this.workspace.metrics.iterations_so_far = this.lineCount;
-            this.lineCount++;
-
           }
+          this.workspace.metrics.iterations_so_far = this.lineCount;
+          this.lineCount++;
         }else{
           //document.getElementById("focus-line")!.innerText = this.workspace.lines[this.lineCount]! || "";
           let c = document.getElementsByClassName("focus-line")
@@ -162,7 +169,13 @@ export class SpaceHypnaFeatureSettingsMst extends FeatureBase {
             }
         }
 
-      }, parseInt(this.get_configuration_element("line_duration").toString()));
+      };
+      this.iterator = setInterval(tick, parseInt(this.get_configuration_element("line_duration").toString()));
+      // Lets a YSS block re-pace the session via setting.spirals.line_duration.
+      this.retimeIterator = (ms: number) => {
+        clearInterval(this.iterator);
+        this.iterator = setInterval(tick, ms);
+      };
 
     }else{
       this._service.console.push("["+this._id+"] Could not fetch required content containers. Be sure that you have registered them first before calling this settings module.");

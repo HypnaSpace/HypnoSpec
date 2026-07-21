@@ -17,6 +17,29 @@ export class SpaceHypnaFeatureSettingsBst extends FeatureBase {
   yssActivated: boolean = false;
   private selected: any;
 
+  // YSS playback state (see YuukSpaceScriptParserService.compile).
+  yssLines: any[] = [];
+  yssLineIndex: number = 0;
+  yssCmdIndex: number = 0;
+  private retimeIterator: ((ms: number) => void) | null = null;
+
+  /** Apply a block's on-entry styles and settings when YSS reaches its first line. */
+  private applyYssBlockEntry(line: any): void {
+    if (!line || !line.enterBlock) return;
+    for (const style of line.enterBlock.styles) this._service.yssService.runCommand(style);
+    for (const setting of line.enterBlock.settings) {
+      if (setting.type === 'setting.spirals.line_duration') {
+        const ms = parseInt(setting.value);
+        if (!isNaN(ms) && ms > 0 && this.retimeIterator) this.retimeIterator(ms);
+      } else if (setting.type === 'setting.session.type') {
+        // The session type is fixed at launch by whichever feature is running;
+        // it cannot be hot-swapped mid-session without rebuilding the feature
+        // tree, so it is parsed but not applied here.
+        console.warn('YSS: setting.session.type is not hot-swappable mid-session; ignoring', setting.value);
+      }
+    }
+  }
+
   override preload(): void {
     console.log("register", this._register)
 
@@ -110,96 +133,76 @@ export class SpaceHypnaFeatureSettingsBst extends FeatureBase {
       }
 
 
-      this.iterator = setInterval(() => {
-
+      const tick = () => {
 
         if(this._service.use_yss && !this.yssActivated){
-            console.warn(this._id, "YSS is activated, reconfiguring session.")
+            console.warn(this._id, "YSS is activated, compiling script.")
             this.yssActivated = true;
-            this.workspace.lines = this._service.yssService.process(this.workspace.lines.join('\n'))
-            console.log("Processed script: ", this.workspace.lines)
-            this.selected = this.workspace.lines[Math.floor(this._service.vr ? Math.random() : Math.random() * this.workspace.lines.length)];
+            const cap = Math.min(Math.max(parseInt(this.workspace.time) || 0, 200), 5000);
+            const compiled = this._service.yssService.compile(this.workspace.lines.join('\n'), cap);
+            this.yssLines = compiled.lines;
+            this.workspace.lines = this.yssLines;
+            this._service.console.push(this._id + ": YSS compiled " + this.yssLines.length + " line(s)");
+            this.yssLineIndex = 0;
             this.currentWordIndex = 0;
+            this.yssCmdIndex = 0;
+            this.selected = this.yssLines[0];
+            if (this.selected) {
+              this.currentLine = this.selected.words.split(" ");
+              this.applyYssBlockEntry(this.selected);
+            }
         }
 
-
-          // choose a new line randomly
         if(this.yssActivated){
 
-          // YSS Activated.
+          // YSS activated: walk the compiled lines in order, one token per tick
+          // (no random line-picking, no `while` hang). `[*]` placeholders run
+          // the line's next inline command; block entries apply styles/settings.
 
-          /**
-          if(this.currentWordIndex >= this.selected.words.split(" ").length){
-            this.numberOfLines++;
-            this.currentWordIndex = 0;
-            this.selected = this.workspace.lines[Math.floor(Math.random() * this.workspace.lines.length)];
-          } **/
-
-          let t = this.currentWord;
-
-          this.currentLine = this.selected.words.split(" ");
-          this.currentWord = this.currentLine[this.currentWordIndex] || t;
-          this.currentWordIndex++;
-          this.workspace.metrics.current_word = this.currentWord;
-
-          while(this.currentWord === '[*]'){
-            this.processCommand(t);
+          this.selected = this.yssLines[this.yssLineIndex];
+          if (!this.selected) {
+            this._update_completion_flag(true);
+            clearInterval(this.iterator);
+            return;
           }
-          console.log("Render Word", this.currentWord);
+          this.currentLine = this.selected.words.split(" ");
+          const token = this.currentLine[this.currentWordIndex];
+
+          if (token === '[*]') {
+            this._service.yssService.runCommand(this.selected.cmds[this.yssCmdIndex]);
+            this.yssCmdIndex++;
+            this.currentWord = "";
+          } else {
+            this.currentWord = token ?? "";
+          }
+
           let c = document.getElementsByClassName("focus-line")
           for(let i = 0; i < c.length; i++) {
             (c[i] as HTMLDivElement).innerText = this.currentWord;
           }
 
+          this.currentWordIndex++;
           this.workspace.metrics.current_word = this.currentWord;
           this.workspace.metrics.current_word_index = this.currentWordIndex;
 
-          if(this.currentWordIndex > this.currentLine.length){
-              this.numberOfLines++;
-              this.workspace.metrics.iterations_so_far = this.numberOfLines;
-              this.currentWordIndex = 0;
-              this.actionCounter = 0;
-              // choose a new line randomly
-              let li = Math.floor(Math.random() * this.workspace.lines.length);
-              this.selected = this.workspace.lines[li];
-              this.workspace.metrics.current_line_index = li;
-              this.currentLine = this.selected.words.split(" ");
-              let c = document.getElementsByClassName("focus-line")
-
-              while(this.currentWord === '[*]'){
-              /*console.log("Action Counter: ", this.actionCounter);
-              console.log('Setting command', this.currentActions[this.actionCounter]);
-              console.log("Immediate Next Word: ", this.currentLine[this.currentWordIndex + 1]);
-              let storedCommand = this.currentActions[this.actionCounter];
-              this.currentWord = this.currentLine[this.currentWordIndex + 1] || undefined;
-              if(this.currentWord === undefined || this.currentWord === ''){
-                setTimeout(() => {
-                  console.log('Running command Delayed', this.currentActions[this.actionCounter]);
-                  this._service.yssService.runCommand(storedCommand, null);
-                  this.actionCounter++;
-                }, parseInt(this.workspace.word_duration.toString()) * 2);
-                this.currentWord = this.currentLine[this.currentWordIndex - 1] || t;
-              }else{
-                console.log('Running command normally', this.currentActions[this.actionCounter]);
-                this._service.yssService.runCommand(storedCommand,null);
-                this.actionCounter++;
-                this.currentWordIndex++;
-              }*/
-                this.processCommand(t);
-              }
-
-            this.workspace.metrics.current_word_index = this.currentWordIndex;
-            this.workspace.metrics.current_word = this.currentWord;
-              for(let i = 0; i < c.length; i++) {
-                (c[i] as HTMLDivElement).innerText = this.currentWord;
-              }
+          if (this.currentWordIndex >= this.currentLine.length) {
+            this.numberOfLines++;
+            this.workspace.metrics.iterations_so_far = this.numberOfLines;
+            this.yssLineIndex++;
+            this.currentWordIndex = 0;
+            this.yssCmdIndex = 0;
+            this.workspace.metrics.current_line_index = this.yssLineIndex;
+            const next = this.yssLines[this.yssLineIndex];
+            if (next) {
+              this.currentLine = next.words.split(" ");
+              this.applyYssBlockEntry(next);
+            }
           }
 
-          if(parseInt(this.workspace.time) <= this.numberOfLines) {
-            if(this._service.disableEndCheck){
-              this.numberOfLines = 0;
-              this.currentWordIndex = 0;
-            }else{
+          if (this.yssLineIndex >= this.yssLines.length) {
+            if (this._service.disableEndCheck) {
+              this.yssLineIndex = 0; this.currentWordIndex = 0;
+            } else {
               this._update_completion_flag(true);
               clearInterval(this.iterator);
               return;
@@ -253,37 +256,22 @@ export class SpaceHypnaFeatureSettingsBst extends FeatureBase {
         //this.currentWordIndex++;
         //this.currentWord = this.currentLine.split(" ")[this.currentWordIndex];
         this.workspace.metrics.current_word = this.currentWord;
-        this.workspace.metrics.current_line = this.currentLine.join(" ");
+        this.workspace.metrics.current_line = Array.isArray(this.currentLine) ? this.currentLine.join(" ") : this.currentLine;
         this.workspace.metrics.current_line_length = this.currentLine.length;
         this._service.console_data.metrics = this.workspace.metrics;
 
-      }, this.get_configuration_element("word_duration"));
+      };
+      this.iterator = setInterval(tick, this.get_configuration_element("word_duration"));
+      // Lets a YSS block re-pace the session via setting.spirals.line_duration.
+      this.retimeIterator = (ms: number) => {
+        clearInterval(this.iterator);
+        this.iterator = setInterval(tick, ms);
+      };
 
     }else{
       this._service.console.push("["+this._id+"] Could not fetch required content containers. Be sure that you have registered them first before calling this settings module.");
       this._update_completion_flag(true);
     }
-  }
-
-  processCommand(t: string = '') {
-                console.log("Action Counter: ", this.actionCounter);
-            console.log('Setting command', this.currentActions[this.actionCounter]);
-            console.log("Immediate Next Word: ", this.currentLine[this.currentWordIndex + 1]);
-            let storedCommand = this.currentActions[this.actionCounter];
-            this.currentWord = this.currentLine[this.currentWordIndex + 1] || this.currentLine[this.currentWordIndex - 1] || this.currentLine[this.currentWordIndex];
-            if(this.currentWord === undefined || this.currentWord === ''){
-              setTimeout(() => {
-                console.log('Running command Delayed', this.currentActions[this.actionCounter]);
-                this._service.yssService.runCommand(storedCommand, null);
-                this.actionCounter++;
-              }, parseInt(this.workspace.word_duration.toString()) * 2);
-              this.currentWord = this.currentLine[this.currentWordIndex - 1] || t;
-            }else{
-              console.log('Running command normally', this.currentActions[this.actionCounter]);
-              this._service.yssService.runCommand(storedCommand,null);
-              this.actionCounter++;
-              this.currentWordIndex++;
-            }
   }
 
 }

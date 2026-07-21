@@ -1,434 +1,308 @@
 import { Injectable } from '@angular/core';
-import {single} from "rxjs";
-import {Session} from "../../models/session";
-import {YSScript} from "../../models/ysscript";
-import {defaultGlobalSettings} from "../../models/default-global-settings";
+import { Session } from '../../models/session';
+import { YSScript } from '../../models/ysscript';
+import { defaultGlobalSettings } from '../../models/default-global-settings';
 
+/**
+ * A single command parsed out of a `[...]` token.
+ */
+export interface YssCommand {
+  type: string;          // 'anchor' | 'controller' | 'sound' | 'block' | 'setting.*' | 'style.*'
+  value?: string;        // right-hand side of `key=value`
+  id?: string | null;    // ;id=… (anchor name, block name, or the block a setting/style targets)
+  goto?: string;         // ;goto=… (block=end only)
+  apply?: string;        // ;apply=… (style only): number of lines, or 'always'
+  block?: string | null; // the block this token appeared inside
+}
+
+/**
+ * One playable line after compilation: display text with `[*]` placeholders
+ * where inline commands were, the inline commands in order, and — on the first
+ * line of each block instance — the settings/styles to apply on entry.
+ */
+export interface YssLine {
+  words: string;
+  cmds: YssCommand[];
+  block: string;
+  enterBlock?: { settings: YssCommand[]; styles: YssCommand[] };
+}
+
+export interface CompiledYss {
+  lines: YssLine[];
+  controller: 'sequential' | 'random';
+  global_settings: any;
+}
+
+interface YssBlock {
+  lines: YssLine[];
+  settings: YssCommand[];
+  styles: YssCommand[];
+  goto?: string;
+}
+
+/**
+ * YuukSpace Script (YSS) engine.
+ *
+ * A YSS script is the content lines, reinterpreted when the `yss` feature is
+ * enabled. Each line may contain `[command]` tokens and plain words. Commands:
+ *
+ *   Singletons:  [anchor;id=x]  [controller=sequential|random]  [sound=file]
+ *                [style.text.main.color=#f00;apply=2]  [setting.spirals.line_duration=1500;id=block]
+ *   Blocks:      [block=start;id=x]  …lines…  [block=end;id=x;goto=y]
+ *
+ * `compile()` turns the raw script into an ordered, finite list of playable
+ * lines: blocks are assembled, the controller decides their order
+ * (sequential = source order, random = shuffled), `goto` on a block's end jumps
+ * to another block/anchor, and the whole thing is flattened with a hard cap so a
+ * `goto` loop can never hang the session. The settings/session feature (BST/MST)
+ * then just walks that list.
+ *
+ * This replaces an earlier draft where blocks/controller/goto were parsed but
+ * never applied, inline commands never fired (an unpopulated `currentActions`),
+ * and a `while (word === '[*]')` guard could hang.
+ */
 @Injectable({
-  providedIn: 'root'
+  providedIn: 'root',
 })
 export class YuukSpaceScriptParserService {
-
   public defaultGlobalSettings: any = defaultGlobalSettings;
 
-  constructor() { }
+  /** Hard ceiling on emitted lines — bounds intentional `goto` loops so a
+   *  cyclic script produces a long-but-finite sequence instead of hanging. */
+  static readonly DEFAULT_MAX_LINES = 2000;
+
+  currentBlock: string | null = null;
+
+  constructor() {}
+
+  // -- classification helpers ------------------------------------------------
+
+  private isSetting(type: string): boolean {
+    return typeof type === 'string' && type.startsWith('setting.');
+  }
+
+  private isStyle(type: string): boolean {
+    return typeof type === 'string' && type.startsWith('style.');
+  }
+
+  /** Split on the FIRST '=' only, so values may themselves contain '='. */
+  private splitFirst(text: string, sep: string): [string, string | undefined] {
+    const i = text.indexOf(sep);
+    if (i === -1) return [text, undefined];
+    return [text.slice(0, i), text.slice(i + 1)];
+  }
+
+  // -- tokenizing ------------------------------------------------------------
+
+  /** Parse a single `[…]` token into a command. */
+  processCommand(token: string): YssCommand {
+    const inner = token.replace(/^\[/, '').replace(/\]$/, '');
+    const [head, ...args] = inner.split(';');
+    const [key, value] = this.splitFirst(head, '=');
+
+    const cmd: YssCommand = { type: key, value, id: null, block: this.currentBlock };
+    for (const arg of args) {
+      const [argKey, argVal] = this.splitFirst(arg, '=');
+      if (argKey === 'id') cmd.id = argVal ?? null;
+      else if (argKey === 'goto') cmd.goto = argVal;
+      else if (argKey === 'apply') cmd.apply = argVal;
+    }
+
+    // Block state is threaded through the tokenizer so lines know which block
+    // they belong to (block=start enters, block=end leaves to the default).
+    if (key === 'block') {
+      if (value === 'start') this.currentBlock = cmd.id || null;
+      else if (value === 'end') this.currentBlock = null;
+    }
+
+    if (!this.isSetting(key) && !this.isStyle(key) &&
+        !['anchor', 'controller', 'sound', 'block'].includes(key)) {
+      console.error(`YSS: invalid command: ${key}`);
+    }
+    return cmd;
+  }
+
+  /** Tokenize a raw line into `{ words, cmds, block }`. `words` keeps the plain
+   *  text with each `[…]` token replaced by a `[*]` placeholder. */
+  processLine(line: string): YssLine {
+    const before: string | null = this.currentBlock;
+    const tokens = line.match(/\[(.*?)\]/g)?.map((t) => t.trim()) ?? [];
+    const cmds = tokens.map((t) => this.processCommand(t));
+    const words = line.replace(/\[(.*?)\]/g, '[*]');
+    // A line's block is where its *content* lives: the block it opened (if it
+    // starts one) or the block it was already in.
+    const block = this.currentBlock || before || '_default';
+    return { words, cmds, block };
+  }
+
+  /** Split a whole script into tokenized lines (block state reset first). */
+  process(script: string): YssLine[] {
+    this.currentBlock = null;
+    return (script ?? '').split('\n').map((line) => this.processLine(line));
+  }
+
+  // -- compilation -----------------------------------------------------------
+
+  private shuffle<T>(items: T[]): T[] {
+    const out = items.slice();
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+  }
 
   /**
-   * - Singletons
-   * [anchor]
-   * [setting.element=value]
-   * [controller=sequential]
-   * [style.text.main.color=#FF0000]
-   * [style.text.main.size=24px]
-   * [style.text.main.weight=bold]
-   * [style.text.main.additional_class=class1]
-   * [style.text.distractors.color=#0000FF]
-   * [style.text.distractors.size=18px]
-   * [style.text.distractors.weight=normal]
-   * [style.text.distractors.additional_class=class2]
-   * [sound=file.mp3]
-   * - Blocks
-   * [block=start]
-   * [block=end]
-   * - Parameters
-   * [anchor;id=first]
-   * [block=start;id=something]
-   * [block=end;id=something;goto=first]
-   * - List of Singletons
-   * anchor: sets an anchor point
-   * setting.el=val: sets a setting with name "el" to value "val". if has an id, will set setting for a block with that
-   * controller: sets the controller for the session. Default Sequential. Will go down the list in order. Optional, random: Will generate a random list of the blocks then follow that list.
-   * - List of Blocks
-   * [block=start] starts a new block
-   * [block=end] ends the current block. Optional goto parameter will go to the ID with that name.
-   *
-   * - List of Parameters
-   *
-   * id = Anchor point, must be unique, must start with a letter, must have no spaces, and must be unique (except block=end)
-   * goto = For Block=End. ID to go to when block=end is reached. If not present, it will go to the next block.
-   * apply = For Style.*, Sound.*. Determines if the Singleton applies for x number of lines or the word "always". Defaults to 1 if not present.
-   *
+   * Compile a raw script into an ordered, finite list of playable lines.
+   * `maxLines` caps the output so a `goto` cycle terminates.
    */
+  compile(script: string, maxLines: number = YuukSpaceScriptParserService.DEFAULT_MAX_LINES): CompiledYss {
+    this.currentBlock = null;
 
-  sampleScript: string = `[anchor;id=top]
-[setting.session.type=bst]
-[setting.spirals.line_duration=1500]
-[controller=random]
-[block=start;id=initial]
-[setting.session.type=mst;id=initial]
-[setting.spirals.line_duration=2000;id=initial]
-[style.text.main.color=#FF0000;apply=1] This is a test of the first block
-Second line
-Third Line[sound=/static/testing/ding.mp3]
-[block=end;id=initial]
-[block=start;id=bsttest]
-[setting.session.type=bst;id=msttest]
-[setting.spirals.line_duration=1000;id=msttest]
-This is a test of the BST block
-BST block tests are cool [sound=/static/testing/ding.mp3]
-[style.text.main.color=#FF0000;apply=1] BST application is fun
-[block=end;id=bsttest]`
+    const blockOrder: string[] = ['_default'];
+    const blocks: Record<string, YssBlock> = { _default: { lines: [], settings: [], styles: [] } };
+    const anchors: Record<string, string> = {}; // anchor/block id -> block id
+    let controller: 'sequential' | 'random' = 'sequential';
 
+    const ensureBlock = (id: string) => {
+      if (!blocks[id]) {
+        blocks[id] = { lines: [], settings: [], styles: [] };
+        blockOrder.push(id);
+      }
+    };
 
-  acceptableCommands: string[] = [
-      'anchor',
-      'controller',
-      'sound',
-      'block'
-  ];
-  styleCommands: string[] = [
-      'style.text.main.add_class',
-      'style.text.main.color',
-      'style.text.main.size',
-      'style.text.main.font_family',
-  ];
-  settingCommand: string[] = [
-      'setting.session.type',
-      'setting.spirals.line_duration',
-      'setting.spirals.loops',
-  ]
+    for (const raw of (script ?? '').split('\n')) {
+      const before: string | null = this.currentBlock;
+      const line = this.processLine(raw); // updates this.currentBlock via block=start/end
+      const enteredBlock: string | null = this.currentBlock; // after processing this line's tokens
 
-  settings: any = {
+      for (const cmd of line.cmds) {
+        if (cmd.type === 'controller') {
+          controller = cmd.value === 'random' ? 'random' : 'sequential';
+        } else if (cmd.type === 'block' && cmd.value === 'start') {
+          const id = cmd.id || `_b${blockOrder.length}`;
+          ensureBlock(id);
+          anchors[id] = id;
+        } else if (cmd.type === 'block' && cmd.value === 'end') {
+          const id = cmd.id || before || '_default';
+          if (cmd.goto && blocks[id]) blocks[id].goto = cmd.goto;
+        } else if (cmd.type === 'anchor' && cmd.id) {
+          anchors[cmd.id] = before || '_default';
+        } else if (this.isSetting(cmd.type)) {
+          const target = cmd.id && blocks[cmd.id] ? cmd.id : enteredBlock || before || '_default';
+          ensureBlock(target);
+          blocks[target].settings.push(cmd);
+        } else if (this.isStyle(cmd.type)) {
+          // A style on a line with actual text is inline (attached to the line
+          // below); a style on its own is block-level (applied on entry).
+          const isInline = line.words.replace(/\[\*\]/g, '').trim().length > 0;
+          if (!isInline) {
+            const target = cmd.id && blocks[cmd.id] ? cmd.id : enteredBlock || before || '_default';
+            ensureBlock(target);
+            blocks[target].styles.push(cmd);
+          }
+        }
+      }
 
-  }
-  blocks: any = [
-
-  ]
-
-  currentBlock: any = null;
-
-  loadBlockyScript(script: YSScript): YSScript{
-    for (let i = 0; i < script.blocks.length; i++) {
-      for (let j = 0; j < script.blocks[i].lines; j++) {
-        script.session_linear.push(script.blocks[i].lines[j]);
+      // A content line has real text; attach the runnable inline commands.
+      const text = line.words.replace(/\[\*\]/g, '').trim();
+      if (text.length > 0) {
+        const b = blocks[line.block] ? line.block : '_default';
+        const inline = line.cmds.filter((c) => c.type === 'sound' || this.isStyle(c.type));
+        blocks[b].lines.push({ words: line.words, cmds: inline, block: b });
       }
     }
 
-    return script;
-  }
+    // Execution order: only blocks that actually have content.
+    let order = blockOrder.filter((id) => blocks[id].lines.length > 0);
+    if (controller === 'random') order = this.shuffle(order);
 
-  renderScript(session: Session, global_settings: any = null): YSScript {
-    console.log("Rendering script for session", session);
-    if(global_settings === null) {
-      global_settings = this.defaultGlobalSettings;
-    }
-
-    let script: YSScript = {
-      blocks: [],
-      global_settings: global_settings,
-      session_linear: []
-    }
-
-    script.blocks.push({
-      id: '_default',
-      settings: [],
-      style: [],
-      lines: []
-    })
-
-    // let's get this hellhole started.
-    script.session_linear = this.process(session.data.raw_script);
-    // first, let's get all the overridden settings from linear output.
-    for (let i = 0; i < script.session_linear.length; i++) {
-      console.log("values", script.session_linear[i].words.trim().replace('[*]', '').trim().length);
-
-      if(script.session_linear[i].block !== null){
-        script.blocks[script.blocks.findIndex(b => b.id === script.session_linear[i].block)].lines.push(script.session_linear[i]);
-      }else{
-        script.blocks[0].lines.push(script.session_linear[i]);
-      }
-
-      if(script.session_linear[i].cmds.length != 0 && script.session_linear[i].block !== null && script.session_linear[i].words.trim().replace('[*]', '').trim().length === 0){
-        // this filter should return pure settings only that are assigned to a block.
-        for (let j = 0; j < script.session_linear[i].cmds.length; j++) {
-          switch(script.session_linear[i].cmds[j].type) {
-            case 'block':
-              console.log("Handling BLOCK command", script.session_linear[i].cmds[j]);
-              if (script.session_linear[i].cmds[j].value === 'start') {
-                script.blocks.push({
-                  id: script.session_linear[i].cmds[j].id,
-                  settings: [],
-                  style: [],
-                  lines: [script.session_linear[i]]
-                });
-              }
-              break;
-            case this.settingCommand.find(s => s.includes(script.session_linear[i].cmds[j].type)) !== undefined ? script.session_linear[i].cmds[j].type : false:
-              // find a block in script.block with id and add setting to array
-              for (let k = 0; k < script.blocks.length; k++) {
-                if(script.blocks[k].id === script.session_linear[i].cmds[j].id){
-                  script.blocks[k].settings.push(script.session_linear[i].cmds[j]);
-                  break;
-                }
-              }
-              break;
-              //script.session_linear[i].cmds[j].type
-            case this.styleCommands.find(s => s.includes(script.session_linear[i].cmds[j].type)) !== undefined ? script.session_linear[i].cmds[j].type : false:
-              // find a block in script.block with id and add style to array
-              for (let k = 0; k < script.blocks.length; k++) {
-                if(script.blocks[k].id === script.session_linear[i].cmds[j].id){
-                  script.blocks[k].style.push(script.session_linear[i].cmds[j]);
-                  break;
-                }
-              }
-              break;
-            default:
-              break;
-          }
+    const out: YssLine[] = [];
+    if (order.length > 0) {
+      let pos = 0;
+      let guard = 0;
+      const guardCap = maxLines * 4 + order.length + 1;
+      while (pos >= 0 && pos < order.length && out.length < maxLines && guard < guardCap) {
+        guard++;
+        const blk = blocks[order[pos]];
+        blk.lines.forEach((ln, i) => {
+          if (out.length >= maxLines) return;
+          out.push(
+            i === 0
+              ? { ...ln, enterBlock: { settings: blk.settings, styles: blk.styles } }
+              : { ...ln },
+          );
+        });
+        if (blk.goto) {
+          const target = anchors[blk.goto] ?? blk.goto;
+          pos = order.indexOf(target); // not found -> -1 -> sequence ends
+        } else {
+          pos += 1;
         }
-
       }
     }
 
-    if(script.blocks[0].lines.length > 0){
-      script.blocks[0].settings.push(this.processLine("[setting.session.type=mst;id=_default]").cmds[0])
-    }
-
-    return script;
-
+    return { lines: out, controller, global_settings: this.defaultGlobalSettings };
   }
 
-  processCommand(cmd: string){
-    console.log(cmd);
-    const [command,...args] = cmd.replace('[','').replace(']','').split(';');
-    // singleton commands accepted list
-    const acceptableCommands = [
-      'anchor',
-      'controller',
-      'sound',
-      'block'
-    ];
-    const styleCommands = [
-      'style.text.main.add_class',
-      'style.text.main.color',
-      'style.text.main.size',
-      'style.text.main.font_family',
-    ];
-    const settingCommands = [
-      'setting.session.type',
-      'setting.spirals.line_duration',
-      'setting.spirals.loops',
-    ]
-    let singleton: any = {
-      type: null,
-      value: null,
-      id: null
-    }
-    let acceptableArgs = [];
-    console.log("Switching on", command.split('=')[0]);
-    console.log("setting check", settingCommands.find(s => s === command.split('=')[0]) !== undefined ? command.split('=')[0] : false);
-    console.log("style check", styleCommands.find(s => s === command.split('=')[0]) !== undefined ? command.split('=')[0] : false)
-    switch(command.split('=')[0]){
-      case 'anchor':
+  // -- inline command execution ---------------------------------------------
 
-        singleton = {
-          type: 'anchor',
-          id: null,
-          block: this.currentBlock
-        }
+  /** Run an inline command against the live DOM (sound + text styling). Block
+   *  settings (durations, session type) are handled by the feature on entry,
+   *  not here — those cannot be applied mid-word. */
+  runCommand(cmd: YssCommand | undefined | null): void {
+    if (!cmd || !cmd.type) return;
 
-        acceptableArgs = ['id'];
-        //find in args if it contains an acceptable arg before the = sign
-        for (let i = 0; i < args.length; i++) {
-          if(acceptableArgs.includes(args[i].split('=')[0])){
-            singleton.id = args[i].split('=')[1];
-          }
-        }
-        console.log("anchor", singleton);
-        // anchor is finished.
-        break;
-      case 'controller':
-        singleton = {
-          type: command.split('=')[0],
-          value: command.split('=')[1],
-          block: this.currentBlock
-        }
-        break;
-      case 'sound':
-        singleton = {
-          type: command.split('=')[0],
-          value: command.split('=')[1],
-          block: this.currentBlock
-        }
-
-        break;
-      case settingCommands.find(s => s.includes(command.split('=')[0])) !== undefined ? command.split('=')[0] : false:
-        singleton = {
-          type: command.split('=')[0],
-          value: command.split('=')[1],
-          id: null,
-          block: this.currentBlock
-        }
-        acceptableArgs = ['id'];
-        for (let i = 0; i < args.length; i++) {
-          if(acceptableArgs.includes(args[i].split('=')[0])){
-            singleton[args[i].split('=')[0]] = args[i].split('=')[1];
-          }
-        }
-        break;
-      case styleCommands.find(s => s.includes(command.split('=')[0])) !== undefined ? command.split('=')[0] : false:
-        singleton = {
-          type: command.split('=')[0],
-          value: command.split('=')[1],
-          apply: '1',
-          id: null,
-          block: this.currentBlock
-        }
-        acceptableArgs = ['id', 'apply'];
-        for (let i = 0; i < args.length; i++) {
-          if(acceptableArgs.includes(args[i].split('=')[0])){
-            singleton[args[i].split('=')[0]] = args[i].split('=')[1];
-          }
-        }
-        break;
-      case 'block':
-
-        singleton = {
-          type: 'block',
-          value: command.split('=')[1],
-          id: null,
-          block: this.currentBlock
-        }
-        if(singleton.value ==='start'){
-          acceptableArgs = ['id'];
-          for (let i = 0; i < args.length; i++) {
-          if(acceptableArgs.includes(args[i].split('=')[0])){
-            singleton.id = args[i].split('=')[1];
-            this.currentBlock = singleton.id;
-            singleton.block = this.currentBlock;
-            break;
-          }
-        }
-        }
-        if(singleton.value === 'end'){
-          acceptableArgs = ['id', 'goto'];
-          for (let i = 0; i < args.length; i++) {
-            if(acceptableArgs.includes(args[i].split('=')[0])){
-              singleton.id = args[i].split('=')[1];
-            }
-            if(args[i].split('=')[0] === 'goto'){
-              singleton.goto = args[i].split('=')[1];
-            }
-            this.currentBlock = null;
-            singleton.block = null;
-          }
-        }
-        break;
-      case 'apply':
-      default:
-        console.error(`Invalid command: ${command}`);
-        break;
-    }
-    return singleton;
-  }
-
-  processLine(line: string){
-    // remove brackets and split by spaces
-    // regex find
-    let cmds = [];
-    const parts: string[] = line.match(/\[(.*?)\]/g)?.map(part => part.trim()) || [];
-    for (let i = 0; i < parts.length; i++) {
-      cmds.push(this.processCommand(parts[i]));
-    }
-    let words = line.replace(/\[(.*?)\]/g, '[*]');
-    return {
-      words: words,
-      cmds: cmds,
-      block: this.currentBlock || '_default',
-    }
-  }
-
-  process(script: string){
-    const lines = script.split('\n');
-    let processed: any[] = [];
-    lines.forEach((line, index) => {
-      let result = this.processLine(line);
-      processed.push(result);
-    })
-    return processed;
-  }
-
-  runCommand(cmd: any, settings: Session | null) {
-    let template = {
-          type: '',
-          value: '',
-          apply: '',
-          id: '',
-          block: ''
-    }
-
-    const acceptableCommands = [
-      'anchor',
-      'controller',
-      'sound',
-      'block'
-    ];
-    const styleCommands = [
-      'style.text.main.add_class',
-      'style.text.main.color',
-      'style.text.main.size',
-      'style.text.main.font_family',
-    ];
-    const settingCommands = [
-      'setting.session.type',
-      'setting.spirals.line_duration',
-      'setting.spirals.loops',
-    ]
-
-    if(cmd === undefined){
-      console.info("Command is undefined. Skipping as complete.");
+    if (cmd.type === 'sound') {
+      try {
+        const audio = new Audio(cmd.value);
+        document.body.appendChild(audio);
+        audio.play().catch(() => undefined);
+        audio.addEventListener('ended', () => audio.remove());
+      } catch (e) {
+        console.error('YSS: could not play sound', cmd, e);
+      }
       return;
     }
 
-    switch(cmd.type){
-      case 'anchor':
-      case 'controller':
-      case 'setting':
-      case 'style':
-        break;
-      case settingCommands.find(s => s.includes(cmd.type)) !== undefined ? cmd.type : false:
-        console.error("Can't run settings changes inline. Offending Line: ", cmd);
-        break;
-      case styleCommands.find(s => s.includes(cmd.type)) !== undefined ? cmd.type : false:
-        if(cmd.type.includes('text.main')) {
-          switch (cmd.type) {
-            case 'style.text.main.add_class':
-              console.log("Adding class", cmd.value, "to .focus-line");
-              document.querySelector(`.focus-line`)?.classList.add(cmd.value);
-              break;
-            case 'style.text.main.color':
-              console.log("Changing color to", cmd.value, "on .focus-line");
-              (document.querySelector(`.focus-line`) as unknown as HTMLElement).style.color = cmd.value;
-              break;
-            case 'style.text.main.size':
-              console.log("Changing size to", cmd.value, "on .focus-line");
-              (document.querySelector(`.focus-line`) as unknown as HTMLElement).style.fontSize = cmd.value;
-              break;
-            case 'style.text.main.font_family':
-              console.log("Changing font family to", cmd.value, "on .focus-line");
-              (document.querySelector(`.focus-line`) as unknown as HTMLElement).style.fontFamily = cmd.value;
-              break;
-            default:
-              break;
-          }
+    if (this.isStyle(cmd.type)) {
+      const targets = document.getElementsByClassName('focus-line');
+      for (let i = 0; i < targets.length; i++) {
+        const el = targets[i] as HTMLElement;
+        switch (cmd.type) {
+          case 'style.text.main.add_class':
+            if (cmd.value) el.classList.add(cmd.value);
+            break;
+          case 'style.text.main.color':
+            el.style.color = cmd.value ?? '';
+            break;
+          case 'style.text.main.size':
+            el.style.fontSize = cmd.value ?? '';
+            break;
+          case 'style.text.main.font_family':
+            el.style.fontFamily = cmd.value ?? '';
+            break;
+          default:
+            break;
         }
-        break;
-      case 'sound':
-        try{
-          console.log("Playing sound", cmd.value);
-          // play sound by adding to document.body then play it.
-        let el = new Audio(cmd.value);
-        document.body.appendChild(el);
-        el.play().then(r => console.log("Played sound:", r));
-        // now delete it.
-        el.addEventListener('ended', () => document.body.removeChild(el));
-        }catch(e){
-          console.error("Can't play sound inline. Offending Line: ", cmd);
-        }
-          break;
-        default:
-          break;
-        }
+      }
+      return;
     }
 
+    if (this.isSetting(cmd.type)) {
+      console.warn('YSS: settings cannot be applied inline, only on block entry:', cmd);
+    }
+  }
+
+  // -- legacy shape kept for compatibility ----------------------------------
+
+  /** Retained for the older `session.data.raw_script` entry point. */
+  renderScript(session: Session, global_settings: any = null): YSScript {
+    const compiled = this.compile((session as any)?.data?.raw_script ?? '');
+    return {
+      blocks: [],
+      global_settings: global_settings ?? this.defaultGlobalSettings,
+      session_linear: compiled.lines,
+    };
+  }
 }
