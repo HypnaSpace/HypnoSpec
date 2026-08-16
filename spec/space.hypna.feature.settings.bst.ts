@@ -143,10 +143,12 @@ export class SpaceHypnaFeatureSettingsBst extends FeatureBase {
             this.yssLines = compiled.lines;
             this.workspace.lines = this.yssLines;
             this._service.console.push(this._id + ": YSS compiled " + this.yssLines.length + " line(s)");
-            this.yssLineIndex = 0;
+            // BST picks its starting line at random (legacy behaviour); the
+            // compiled lines are a pool to draw from, not a sequence.
+            this.yssLineIndex = Math.floor(Math.random() * this.yssLines.length);
             this.currentWordIndex = 0;
             this.yssCmdIndex = 0;
-            this.selected = this.yssLines[0];
+            this.selected = this.yssLines[this.yssLineIndex];
             if (this.selected) {
               this.currentLine = this.selected.words.split(" ");
               this.applyYssBlockEntry(this.selected);
@@ -155,11 +157,11 @@ export class SpaceHypnaFeatureSettingsBst extends FeatureBase {
 
         if(this.yssActivated){
 
-          // YSS activated: walk the compiled lines in order, one token per tick
-          // (no random line-picking, no `while` hang). `[*]` placeholders run
-          // the line's next inline command; block entries apply styles/settings.
+          // YSS activated: BST keeps its random line selection (the compiled
+          // lines are a pool, not a sequence — MST is the ordered variant).
+          // One token per tick; `[*]` placeholders run the line's next inline
+          // command; block entries apply styles/settings when a line is picked.
 
-          this.selected = this.yssLines[this.yssLineIndex];
           if (!this.selected) {
             this._update_completion_flag(true);
             clearInterval(this.iterator);
@@ -188,24 +190,14 @@ export class SpaceHypnaFeatureSettingsBst extends FeatureBase {
           if (this.currentWordIndex >= this.currentLine.length) {
             this.numberOfLines++;
             this.workspace.metrics.iterations_so_far = this.numberOfLines;
-            this.yssLineIndex++;
             this.currentWordIndex = 0;
             this.yssCmdIndex = 0;
+            this.yssLineIndex = Math.floor(Math.random() * this.yssLines.length);
             this.workspace.metrics.current_line_index = this.yssLineIndex;
-            const next = this.yssLines[this.yssLineIndex];
-            if (next) {
-              this.currentLine = next.words.split(" ");
-              this.applyYssBlockEntry(next);
-            }
-          }
-
-          if (this.yssLineIndex >= this.yssLines.length) {
-            if (this._service.disableEndCheck) {
-              this.yssLineIndex = 0; this.currentWordIndex = 0;
-            } else {
-              this._update_completion_flag(true);
-              clearInterval(this.iterator);
-              return;
+            this.selected = this.yssLines[this.yssLineIndex];
+            if (this.selected) {
+              this.currentLine = this.selected.words.split(" ");
+              this.applyYssBlockEntry(this.selected);
             }
           }
 
