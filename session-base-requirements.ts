@@ -16,7 +16,8 @@ export const sessionBaseRequirements: any = {
     {
       "either": [
         "space.hypna.feature.spirals.media",
-        "space.hypna.feature.spirals.webgl"
+        "space.hypna.feature.spirals.webgl",
+        "space.hypna.feature.spirals.customgl"
       ]
     }
   ],
@@ -35,7 +36,8 @@ export const sessionBaseRequirements: any = {
     {
       "either": [
         "space.hypna.feature.spirals.media",
-        "space.hypna.feature.spirals.webgl"
+        "space.hypna.feature.spirals.webgl",
+        "space.hypna.feature.spirals.customgl"
       ]
     }
   ],

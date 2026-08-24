@@ -119,6 +119,60 @@ export const specDefaults: any = {
       'zoom': 1
     }
   },
+  'space.hypna.feature.spirals.customgl': {
+    'id': 'space.hypna.feature.spirals.customgl',
+    '$schema': 'https://hypna.space/hypnospec/draft/2025-07/schemas/feature/space.hypna.feature.spirals.customgl/',
+    'version': '2025-07',
+    'configuration': {
+      'opacity': '0.6',
+      'spiral_color': '#FFFFFF',
+      'bg_color': '#000000',
+      'spin_speed': 1,
+      'throb_speed': 2,
+      'throb_strength': 1,
+      'zoom': 1,
+      'fragment_source': `// Custom spiral fragment shader (WebGL 1 / GLSL ES 1.0).
+// Uniforms provided by the player (declare only the ones you use):
+//   float iTime          seconds since the spiral started
+//   vec2  iRes           canvas resolution in pixels
+//   vec2  u_resolution   same as iRes
+//   vec3  spiralColor    the "Spiral Color" setting (0.0-1.0 rgb)
+//   vec3  bgColor        the "Background Color" setting (0.0-1.0 rgb)
+//   float spinSpeed, throbSpeed, throbStrength, zoom   the numeric settings
+precision highp float;
+
+#define PI 3.1415926538
+
+uniform vec2 u_resolution;
+
+uniform vec2 iRes;
+uniform float iTime;
+
+uniform vec3 spiralColor;
+uniform vec3 bgColor;
+
+uniform float spinSpeed;
+uniform float throbSpeed;
+uniform float throbStrength;
+uniform float zoom;
+
+void main() {
+    vec2 fragCoord = gl_FragCoord.xy;
+    vec2 uv = (fragCoord - 0.5 * u_resolution) / u_resolution.y;
+    vec2 truPos = uv;
+
+    float angle = atan(truPos.y, truPos.x);
+    float dist = pow(length(truPos), .4 + sin((iTime + cos(iTime * .05) * 0.1) * throbSpeed) * 0.2 * throbStrength);
+
+    float spiFactor = pow(sin(dist * 40. * zoom - iTime * 5. * spinSpeed) + 1.0, 50.);
+    spiFactor = clamp(spiFactor, 0., 1.);
+
+    vec3 color = mix(spiralColor, bgColor, spiFactor);
+    gl_FragColor = vec4(color, 1.0);
+}
+`
+    }
+  },
   'space.hypna.feature.settings.yss': {
     'id': 'space.hypna.feature.settings.yss',
     '$schema': 'https://hypna.space/hypnospec/draft/2025-07/schemas/feature/space.hypna.feature.settings.yss/',

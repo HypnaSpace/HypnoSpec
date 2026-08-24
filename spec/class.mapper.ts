@@ -9,6 +9,7 @@ import {SpaceHypnaFeatureSettingsAudio} from "./space.hypna.feature.settings.aud
 import {SpaceHypnaFeatureSettingsYss} from "./space.hypna.feature.settings.yss";
 import {SpaceHypnaFeatureSettingsDistractorsWall} from "./space.hypna.feature.settings.distractors.wall";
 import {SpaceHypnaFeatureSpiralsWebgl} from "./space.hypna.feature.spirals.webgl";
+import {SpaceHypnaFeatureSpiralsCustomgl} from "./space.hypna.feature.spirals.customgl";
 import {SpaceHypnaFeatureSettingsAct} from "./space.hypna.feature.settings.act";
 import {SpaceHypnaFeatureSettingsWlt} from "./space.hypna.feature.settings.wlt";
 import {SpaceHypnaFeatureSettingsEct} from "./space.hypna.feature.settings.ect";
@@ -24,6 +25,7 @@ export const classes: any = {
   "space.hypna.feature.images.basic": SpaceHypnaFeatureImagesBasic,
   "space.hypna.feature.spirals.media": SpaceHypnaFeatureSpiralsMedia,
   "space.hypna.feature.spirals.webgl": SpaceHypnaFeatureSpiralsWebgl,
+  "space.hypna.feature.spirals.customgl": SpaceHypnaFeatureSpiralsCustomgl,
   "space.hypna.feature.settings.customCSS": SpaceHypnaFeatureSettingsCustomCSS,
   "space.hypna.feature.settings.distractors.basic": SpaceHypnaFeatureSettingsDistractorsBasic,
   "space.hypna.feature.settings.yss": SpaceHypnaFeatureSettingsYss,
