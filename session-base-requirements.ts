@@ -10,7 +10,8 @@ export const sessionBaseRequirements: any = {
     },
     {
       "either": [
-        "space.hypna.feature.images.basic"
+        "space.hypna.feature.images.basic",
+        "space.hypna.feature.images.scatter"
       ]
     },
     {
@@ -30,7 +31,8 @@ export const sessionBaseRequirements: any = {
     },
     {
       "either": [
-        "space.hypna.feature.images.basic"
+        "space.hypna.feature.images.basic",
+        "space.hypna.feature.images.scatter"
       ]
     },
     {

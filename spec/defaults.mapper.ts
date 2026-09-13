@@ -46,6 +46,22 @@ export const specDefaults: any = {
       'images_handled_by_outside_source': true
     }
   },
+  'space.hypna.feature.images.scatter': {
+    'id': 'space.hypna.feature.images.scatter',
+    '$schema': 'https://hypna.space/hypnospec/draft/2025-07/schemas/feature/space.hypna.feature.images.scatter/',
+    'version': '2025-07',
+    'configuration': {
+      'images': [],
+      'images_handled_by_outside_source': true,
+      'spawn_frequency': '1500',
+      'lifetime': '4000',
+      'fade_duration': '800',
+      'max_images': 6,
+      'size': 25,
+      'zoom_from': 0.6,
+      'opacity': 0.9
+    }
+  },
   'space.hypna.feature.settings.audio': {
     'id': 'space.hypna.feature.settings.audio',
     '$schema': 'https://hypna.space/hypnospec/draft/2025-07/schemas/feature/space.hypna.feature.settings.audio/',

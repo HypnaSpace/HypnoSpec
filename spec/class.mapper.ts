@@ -3,6 +3,7 @@ import {SpaceHypnaFeatureSettingsBst} from "./space.hypna.feature.settings.bst";
 import {SpaceHypnaFeatureSpiralsMedia} from "./space.hypna.feature.spirals.media";
 import {SpaceHypnaFeatureSettingsDistractorsBasic} from "./space.hypna.feature.settings.distractors.basic";
 import {SpaceHypnaFeatureImagesBasic} from "./space.hypna.feature.images.basic";
+import {SpaceHypnaFeatureImagesScatter} from "./space.hypna.feature.images.scatter";
 import {SpaceHypnaFeatureSettingsMst} from "./space.hypna.feature.settings.mst";
 import {SpaceHypnaFeatureSettingsCustomCSS} from "./space.hypna.feature.settings.customCSS";
 import {SpaceHypnaFeatureSettingsAudio} from "./space.hypna.feature.settings.audio";
@@ -23,6 +24,7 @@ export const classes: any = {
   "space.hypna.feature.settings.bst": SpaceHypnaFeatureSettingsBst,
   "space.hypna.feature.settings.mst": SpaceHypnaFeatureSettingsMst,
   "space.hypna.feature.images.basic": SpaceHypnaFeatureImagesBasic,
+  "space.hypna.feature.images.scatter": SpaceHypnaFeatureImagesScatter,
   "space.hypna.feature.spirals.media": SpaceHypnaFeatureSpiralsMedia,
   "space.hypna.feature.spirals.webgl": SpaceHypnaFeatureSpiralsWebgl,
   "space.hypna.feature.spirals.customgl": SpaceHypnaFeatureSpiralsCustomgl,
