@@ -1,6 +1,6 @@
 # Hypna.space HypnoSpec Implementation
 
-This is the live implementation of [HypnoSpec](https://hypna.space/hypnospec/) on [Hypna.space](https://hypna.space)!
+This is the live implementation of [HypnoSpec](https://hypna.space/hypnospec/) on [Hypna.space](https://hypna.space) and [Fractal](https://hypna.space/fractal/)!
 
 Currently this implementation is compliant with `2025-07`.
 
