@@ -1,5 +1,5 @@
 import {FeatureBase} from "./space.hypna.feature._base";
-import {ElementRef} from "@angular/core";
+import {fitSpiralCanvasToViewport} from "./space.hypna.feature.spirals._viewport";
 import hexRgb from "hex-rgb";
 
 
@@ -173,7 +173,10 @@ export class SpaceHypnaFeatureSpiralsWebgl extends FeatureBase {
       // Update time uniform
       this.gl.uniform1f(iTimeUniformLocation, elapsedTime);
 
-      // Update resolution uniform in case canvas size changes
+      // Follow the viewport (fullscreen after launch, window resize) and keep
+      // both resolution uniforms current — the shader centres on u_resolution.
+      fitSpiralCanvasToViewport(deployedCanvas, this.gl, this._service.vr);
+      this.gl.uniform2f(resolutionUniformLocation, this.gl.canvas.width, this.gl.canvas.height);
       this.gl.uniform2f(iResUniformLocation, this.gl.canvas.width, this.gl.canvas.height);
 
       this.gl.drawArrays(this.gl.TRIANGLES, 0, 6); // Draw the full-screen quad
@@ -264,8 +267,10 @@ export class SpaceHypnaFeatureSpiralsWebgl extends FeatureBase {
         // Update time uniform
         this.gl2.uniform1f(iTimeUniformLocation, elapsedTime);
 
-        // Update resolution uniform in case canvas size changes
-        this.gl2.uniform2f(iResUniformLocation, this.gl.canvas.width, this.gl.canvas.height);
+        // Follow the viewport; see the eye-1 loop above.
+        fitSpiralCanvasToViewport(deployedCanvas2, this.gl2, this._service.vr);
+        this.gl2.uniform2f(resolutionUniformLocation, this.gl2.canvas.width, this.gl2.canvas.height);
+        this.gl2.uniform2f(iResUniformLocation, this.gl2.canvas.width, this.gl2.canvas.height);
 
         this.gl2.drawArrays(this.gl.TRIANGLES, 0, 6); // Draw the full-screen quad
         requestAnimationFrame(animate2);

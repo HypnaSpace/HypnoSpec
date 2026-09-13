@@ -1,4 +1,5 @@
 import {FeatureBase} from "./space.hypna.feature._base";
+import {fitSpiralCanvasToViewport} from "./space.hypna.feature.spirals._viewport";
 import hexRgb from "hex-rgb";
 
 
@@ -152,6 +153,10 @@ export class SpaceHypnaFeatureSpiralsCustomgl extends FeatureBase {
       const frameGl = currentCanvas.getContext('webgl') as WebGLRenderingContext;
 
       frameGl.uniform1f(iTimeUniformLocation, elapsedTime);
+      // Follow the viewport (fullscreen after launch, window resize) and keep
+      // both resolution uniforms current for whichever the author's shader uses.
+      fitSpiralCanvasToViewport(currentCanvas, frameGl, this._service.vr);
+      frameGl.uniform2f(resolutionUniformLocation, frameGl.canvas.width, frameGl.canvas.height);
       frameGl.uniform2f(iResUniformLocation, frameGl.canvas.width, frameGl.canvas.height);
 
       frameGl.drawArrays(frameGl.TRIANGLES, 0, 6);
