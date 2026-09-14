@@ -15,7 +15,10 @@ export class SpaceHypnaFeatureSettingsMst extends FeatureBase {
     if (!line || !line.enterBlock) return;
     for (const style of line.enterBlock.styles) this._service.yssService.runCommand(style);
     for (const setting of line.enterBlock.settings) {
-      if (setting.type === 'setting.spirals.line_duration') {
+      if (this._service.yssService.isSpiralSetting(setting.type)) {
+        // Live spiral variable (colour, speed, zoom, opacity, custom uniform).
+        this._service.yssService.runSpiralSetting(setting);
+      } else if (setting.type === 'setting.spirals.line_duration') {
         const ms = parseInt(setting.value);
         if (!isNaN(ms) && ms > 0 && this.retimeIterator) this.retimeIterator(ms);
       } else if (setting.type === 'setting.session.type') {

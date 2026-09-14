@@ -12,7 +12,19 @@ export interface YssCommand {
   id?: string | null;    // ;id=… (anchor name, block name, or the block a setting/style targets)
   goto?: string;         // ;goto=… (block=end only)
   apply?: string;        // ;apply=… (style only): number of lines, or 'always'
+  fade?: number;         // ;fade=… (setting.spiral.* only): ease to the value over this many ms
   block?: string | null; // the block this token appeared inside
+}
+
+/**
+ * Something that can change a live spiral variable — the active spiral feature
+ * registers itself here at preload so `[setting.spiral.*]` commands have a
+ * target. `name` is the setting/uniform name (`spin_speed`, `zoom`,
+ * `spiral_color`, `opacity`, or a custom GLSL uniform), `value` the raw string
+ * from the script. Returns false when the variable could not be applied.
+ */
+export interface YssSpiralTarget {
+  setSpiralVariable(name: string, value: string, fadeMs?: number): boolean;
 }
 
 /**
@@ -48,7 +60,14 @@ interface YssBlock {
  *
  *   Singletons:  [anchor;id=x]  [controller=sequential|random]  [sound=file]
  *                [style.text.main.color=#f00;apply=2]  [setting.spirals.line_duration=1500;id=block]
+ *   Spiral:      [setting.spiral.spin_speed=3]  [setting.spiral.zoom=2;fade=3000]
+ *                [setting.spiral.spiral_color=#ff0000]  [setting.spiral.opacity=0.5]
+ *                [setting.spiral.<uniform>=1,0.5]  (any float/vec uniform a custom shader declares)
  *   Blocks:      [block=start;id=x]  …lines…  [block=end;id=x;goto=y]
+ *
+ * Spiral settings target the live WebGL spiral (webgl or customgl feature)
+ * and, like styles, may sit inline in a line (fired when playback reaches
+ * them) or alone on a line (applied when the block is entered).
  *
  * `compile()` turns the raw script into an ordered, finite list of playable
  * lines: blocks are assembled, the controller decides their order
@@ -73,6 +92,9 @@ export class YuukSpaceScriptParserService {
 
   currentBlock: string | null = null;
 
+  /** The live spiral, if one is mounted; set by the spiral feature at preload. */
+  spiral: YssSpiralTarget | null = null;
+
   constructor() {}
 
   // -- classification helpers ------------------------------------------------
@@ -83,6 +105,17 @@ export class YuukSpaceScriptParserService {
 
   private isStyle(type: string): boolean {
     return typeof type === 'string' && type.startsWith('style.');
+  }
+
+  /** `setting.spiral.<name>` — a live spiral variable (see YssSpiralTarget). */
+  isSpiralSetting(type: string): boolean {
+    return typeof type === 'string' && type.startsWith('setting.spiral.') && type.length > 'setting.spiral.'.length;
+  }
+
+  /** Commands that may sit inline in a content line (fired as playback reaches
+   *  them) rather than only on block entry. */
+  private isInlineCapable(type: string): boolean {
+    return type === 'sound' || this.isStyle(type) || this.isSpiralSetting(type);
   }
 
   /** Split on the FIRST '=' only, so values may themselves contain '='. */
@@ -106,6 +139,10 @@ export class YuukSpaceScriptParserService {
       if (argKey === 'id') cmd.id = argVal ?? null;
       else if (argKey === 'goto') cmd.goto = argVal;
       else if (argKey === 'apply') cmd.apply = argVal;
+      else if (argKey === 'fade') {
+        const ms = parseFloat(argVal ?? '');
+        if (isFinite(ms) && ms > 0) cmd.fade = ms;
+      }
     }
 
     // Block state is threaded through the tokenizer so lines know which block
@@ -188,6 +225,14 @@ export class YuukSpaceScriptParserService {
           if (cmd.goto && blocks[id]) blocks[id].goto = cmd.goto;
         } else if (cmd.type === 'anchor' && cmd.id) {
           anchors[cmd.id] = before || '_default';
+        } else if (this.isSpiralSetting(cmd.type)) {
+          // Like styles: inline when the line has text, block-level otherwise.
+          const isInline = line.words.replace(/\[\*\]/g, '').trim().length > 0;
+          if (!isInline) {
+            const target = cmd.id && blocks[cmd.id] ? cmd.id : enteredBlock || before || '_default';
+            ensureBlock(target);
+            blocks[target].settings.push(cmd);
+          }
         } else if (this.isSetting(cmd.type)) {
           const target = cmd.id && blocks[cmd.id] ? cmd.id : enteredBlock || before || '_default';
           ensureBlock(target);
@@ -208,7 +253,7 @@ export class YuukSpaceScriptParserService {
       const text = line.words.replace(/\[\*\]/g, '').trim();
       if (text.length > 0) {
         const b = blocks[line.block] ? line.block : '_default';
-        const inline = line.cmds.filter((c) => c.type === 'sound' || this.isStyle(c.type));
+        const inline = line.cmds.filter((c) => this.isInlineCapable(c.type));
         blocks[b].lines.push({ words: line.words, cmds: inline, block: b });
       }
     }
@@ -247,11 +292,17 @@ export class YuukSpaceScriptParserService {
 
   // -- inline command execution ---------------------------------------------
 
-  /** Run an inline command against the live DOM (sound + text styling). Block
-   *  settings (durations, session type) are handled by the feature on entry,
-   *  not here — those cannot be applied mid-word. */
+  /** Run an inline command against the live DOM (sound + text styling) or the
+   *  live spiral (`setting.spiral.*`). Other block settings (durations,
+   *  session type) are handled by the feature on entry, not here — those
+   *  cannot be applied mid-word. */
   runCommand(cmd: YssCommand | undefined | null): void {
     if (!cmd || !cmd.type) return;
+
+    if (this.isSpiralSetting(cmd.type)) {
+      this.runSpiralSetting(cmd);
+      return;
+    }
 
     if (cmd.type === 'sound') {
       try {
@@ -292,6 +343,19 @@ export class YuukSpaceScriptParserService {
     if (this.isSetting(cmd.type)) {
       console.warn('YSS: settings cannot be applied inline, only on block entry:', cmd);
     }
+  }
+
+  /** Apply a `setting.spiral.<name>` command to the mounted spiral, if any. */
+  runSpiralSetting(cmd: YssCommand): boolean {
+    if (!this.isSpiralSetting(cmd.type)) return false;
+    const name = cmd.type.slice('setting.spiral.'.length);
+    if (!this.spiral) {
+      console.warn('YSS: no live spiral to apply setting to:', cmd.type);
+      return false;
+    }
+    const ok = this.spiral.setSpiralVariable(name, cmd.value ?? '', cmd.fade ?? 0);
+    if (!ok) console.warn('YSS: spiral setting rejected:', cmd.type, cmd.value);
+    return ok;
   }
 
   // -- legacy shape kept for compatibility ----------------------------------
