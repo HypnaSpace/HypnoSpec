@@ -21,7 +21,10 @@ export class SpaceHypnaFeatureSettingsBst extends FeatureBase {
   yssLines: any[] = [];
   yssLineIndex: number = 0;
   yssCmdIndex: number = 0;
-  private retimeIterator: ((ms: number) => void) | null = null;
+  // `declare`, not an initialiser: FeatureBase's constructor runs preload()
+  // before this class's field initialisers, so `= null` here would wipe the
+  // hook preload() installs and silently drop setting.spirals.line_duration.
+  declare private retimeIterator: ((ms: number) => void) | null;
 
   /** Apply a block's on-entry styles and settings when YSS reaches its first line. */
   private applyYssBlockEntry(line: any): void {
@@ -44,6 +47,7 @@ export class SpaceHypnaFeatureSettingsBst extends FeatureBase {
   }
 
   override preload(): void {
+    this.retimeIterator = null;
     console.log("register", this._register)
 
     console.log("vrmode? ", this._service.vr);
