@@ -12,6 +12,7 @@ export class SpaceHypnaFeatureSettingsMst extends FeatureBase {
   // before this class's field initialisers, so `= null` here would wipe the
   // hook preload() installs and silently drop setting.spirals.line_duration.
   declare private retimeIterator: ((ms: number) => void) | null;
+  declare private armTimeout: ReturnType<typeof setTimeout> | null;
 
   /** Apply a block's on-entry styles/settings when YSS reaches its first line. */
   private applyYssBlockEntry(line: any): void {
@@ -22,16 +23,28 @@ export class SpaceHypnaFeatureSettingsMst extends FeatureBase {
         // Live spiral variable (colour, speed, zoom, opacity, custom uniform).
         this._service.yssService.runSpiralSetting(setting);
       } else if (setting.type === 'setting.spirals.line_duration') {
-        const ms = parseInt(setting.value);
-        if (!isNaN(ms) && ms > 0 && this.retimeIterator) this.retimeIterator(ms);
+        const ms = this._service.yssService.entryLineDuration(line);
+        if (ms !== null && this.retimeIterator) this.retimeIterator(ms);
       } else if (setting.type === 'setting.session.type') {
         console.warn('YSS: setting.session.type is not hot-swappable mid-session; ignoring', setting.value);
       }
     }
   }
 
+  /** Compile the raw lines into the YSS playlist (once). */
+  private activateYss(): void {
+    if (this.yssActivated) return;
+    console.warn(this._id, "YSS is activated, compiling script.")
+    this.yssActivated = true;
+    const cap = Math.min(Math.max(this.workspace.lines.length * 4, 200), 5000);
+    const compiled = this._service.yssService.compile(this.workspace.lines.join('\n'), cap);
+    this.workspace.lines = compiled.lines;
+    this._service.console.push(this._id + ": YSS compiled " + this.workspace.lines.length + " line(s)");
+  }
+
   override preload(): void {
     this.retimeIterator = null;
+    this.armTimeout = null;
 
     this._update_completion_flag(false);
 
@@ -119,14 +132,7 @@ export class SpaceHypnaFeatureSettingsMst extends FeatureBase {
 
 
       const tick = () => {
-          if(this._service.use_yss && !this.yssActivated){
-            console.warn(this._id, "YSS is activated, compiling script.")
-            this.yssActivated = true;
-            const cap = Math.min(Math.max(this.workspace.lines.length * 4, 200), 5000);
-            const compiled = this._service.yssService.compile(this.workspace.lines.join('\n'), cap);
-            this.workspace.lines = compiled.lines;
-            this._service.console.push(this._id + ": YSS compiled " + this.workspace.lines.length + " line(s)");
-          }
+          if(this._service.use_yss) this.activateYss();
 
 
           // YSS activated: play the compiled lines in order, one line per tick.
@@ -177,16 +183,36 @@ export class SpaceHypnaFeatureSettingsMst extends FeatureBase {
         }
 
       };
-      this.iterator = setInterval(tick, parseInt(this.get_configuration_element("line_duration").toString()));
       // Lets a YSS block re-pace the session via setting.spirals.line_duration.
       this.retimeIterator = (ms: number) => {
         clearInterval(this.iterator);
         this.iterator = setInterval(tick, ms);
       };
+      // Arm the timer once construction has finished: sibling settings features
+      // (including the YSS switch, which usually follows this one in the spec)
+      // register synchronously after us, and preload() runs before this class's
+      // own field initialisers. Under YSS the wait before the first line follows
+      // the opening block's line_duration instead of the session-wide value, so
+      // a block that opens the session paces every one of its lines.
+      const globalMs = parseInt(this.get_configuration_element("line_duration").toString());
+      this.armTimeout = setTimeout(() => {
+        this.armTimeout = null;
+        let ms = globalMs;
+        if (this._service.use_yss) {
+          this.activateYss();
+          ms = this._service.yssService.entryLineDuration(this.workspace.lines[0]) ?? globalMs;
+        }
+        this.iterator = setInterval(tick, ms);
+      }, 0);
 
     }else{
       this._service.console.push("["+this._id+"] Could not fetch required content containers. Be sure that you have registered them first before calling this settings module.");
       this._update_completion_flag(true);
     }
+  }
+  override unload(): void {
+    if (this.armTimeout !== null) clearTimeout(this.armTimeout);
+    this.armTimeout = null;
+    clearInterval(this.iterator);
   }
 }

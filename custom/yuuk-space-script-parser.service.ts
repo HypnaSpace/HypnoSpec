@@ -290,6 +290,14 @@ export class YuukSpaceScriptParserService {
     return { lines: out, controller, global_settings: this.defaultGlobalSettings };
   }
 
+  /** The `setting.spirals.line_duration` a compiled line applies on block
+   *  entry, in ms, or null when the line opens no block or sets no pace. */
+  entryLineDuration(line: YssLine | undefined | null): number | null {
+    const setting = line?.enterBlock?.settings.find((s) => s.type === 'setting.spirals.line_duration');
+    const ms = setting ? parseInt(setting.value ?? '') : NaN;
+    return !isNaN(ms) && ms > 0 ? ms : null;
+  }
+
   // -- inline command execution ---------------------------------------------
 
   /** Run an inline command against the live DOM (sound + text styling) or the

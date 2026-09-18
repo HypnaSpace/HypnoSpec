@@ -25,6 +25,7 @@ export class SpaceHypnaFeatureSettingsBst extends FeatureBase {
   // before this class's field initialisers, so `= null` here would wipe the
   // hook preload() installs and silently drop setting.spirals.line_duration.
   declare private retimeIterator: ((ms: number) => void) | null;
+  declare private armTimeout: ReturnType<typeof setTimeout> | null;
 
   /** Apply a block's on-entry styles and settings when YSS reaches its first line. */
   private applyYssBlockEntry(line: any): void {
@@ -35,8 +36,8 @@ export class SpaceHypnaFeatureSettingsBst extends FeatureBase {
         // Live spiral variable (colour, speed, zoom, opacity, custom uniform).
         this._service.yssService.runSpiralSetting(setting);
       } else if (setting.type === 'setting.spirals.line_duration') {
-        const ms = parseInt(setting.value);
-        if (!isNaN(ms) && ms > 0 && this.retimeIterator) this.retimeIterator(ms);
+        const ms = this._service.yssService.entryLineDuration(line);
+        if (ms !== null && this.retimeIterator) this.retimeIterator(ms);
       } else if (setting.type === 'setting.session.type') {
         // The session type is fixed at launch by whichever feature is running;
         // it cannot be hot-swapped mid-session without rebuilding the feature
@@ -46,8 +47,31 @@ export class SpaceHypnaFeatureSettingsBst extends FeatureBase {
     }
   }
 
+  /** Compile the raw lines into the YSS pool and pick the opening line (once). */
+  private activateYss(): void {
+    if (this.yssActivated) return;
+    console.warn(this._id, "YSS is activated, compiling script.")
+    this.yssActivated = true;
+    const cap = Math.min(Math.max(parseInt(this.workspace.time) || 0, 200), 5000);
+    const compiled = this._service.yssService.compile(this.workspace.lines.join('\n'), cap);
+    this.yssLines = compiled.lines;
+    this.workspace.lines = this.yssLines;
+    this._service.console.push(this._id + ": YSS compiled " + this.yssLines.length + " line(s)");
+    // BST picks its starting line at random (legacy behaviour); the
+    // compiled lines are a pool to draw from, not a sequence.
+    this.yssLineIndex = Math.floor(Math.random() * this.yssLines.length);
+    this.currentWordIndex = 0;
+    this.yssCmdIndex = 0;
+    this.selected = this.yssLines[this.yssLineIndex];
+    if (this.selected) {
+      this.currentLine = this.selected.words.split(" ");
+      this.applyYssBlockEntry(this.selected);
+    }
+  }
+
   override preload(): void {
     this.retimeIterator = null;
+    this.armTimeout = null;
     console.log("register", this._register)
 
     console.log("vrmode? ", this._service.vr);
@@ -142,25 +166,7 @@ export class SpaceHypnaFeatureSettingsBst extends FeatureBase {
 
       const tick = () => {
 
-        if(this._service.use_yss && !this.yssActivated){
-            console.warn(this._id, "YSS is activated, compiling script.")
-            this.yssActivated = true;
-            const cap = Math.min(Math.max(parseInt(this.workspace.time) || 0, 200), 5000);
-            const compiled = this._service.yssService.compile(this.workspace.lines.join('\n'), cap);
-            this.yssLines = compiled.lines;
-            this.workspace.lines = this.yssLines;
-            this._service.console.push(this._id + ": YSS compiled " + this.yssLines.length + " line(s)");
-            // BST picks its starting line at random (legacy behaviour); the
-            // compiled lines are a pool to draw from, not a sequence.
-            this.yssLineIndex = Math.floor(Math.random() * this.yssLines.length);
-            this.currentWordIndex = 0;
-            this.yssCmdIndex = 0;
-            this.selected = this.yssLines[this.yssLineIndex];
-            if (this.selected) {
-              this.currentLine = this.selected.words.split(" ");
-              this.applyYssBlockEntry(this.selected);
-            }
-        }
+        if(this._service.use_yss) this.activateYss();
 
         if(this.yssActivated){
 
@@ -260,12 +266,23 @@ export class SpaceHypnaFeatureSettingsBst extends FeatureBase {
         this._service.console_data.metrics = this.workspace.metrics;
 
       };
-      this.iterator = setInterval(tick, this.get_configuration_element("word_duration"));
       // Lets a YSS block re-pace the session via setting.spirals.line_duration.
       this.retimeIterator = (ms: number) => {
         clearInterval(this.iterator);
         this.iterator = setInterval(tick, ms);
       };
+      // Arm the timer once construction has finished: sibling settings features
+      // (including the YSS switch, which usually follows this one in the spec)
+      // register synchronously after us, and preload() runs before this class's
+      // own field initialisers. Under YSS the opening line is picked now and its
+      // block entry applied, so a block's line_duration also paces the wait
+      // before its first word; otherwise the session-wide word_duration applies.
+      const globalMs = this.get_configuration_element("word_duration");
+      this.armTimeout = setTimeout(() => {
+        this.armTimeout = null;
+        if (this._service.use_yss) this.activateYss();
+        if (this.iterator === undefined) this.iterator = setInterval(tick, globalMs);
+      }, 0);
 
     }else{
       this._service.console.push("["+this._id+"] Could not fetch required content containers. Be sure that you have registered them first before calling this settings module.");
@@ -273,4 +290,9 @@ export class SpaceHypnaFeatureSettingsBst extends FeatureBase {
     }
   }
 
+  override unload(): void {
+    if (this.armTimeout !== null) clearTimeout(this.armTimeout);
+    this.armTimeout = null;
+    clearInterval(this.iterator);
+  }
 }
